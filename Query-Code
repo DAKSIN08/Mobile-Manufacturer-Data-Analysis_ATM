@@ -1,0 +1,139 @@
+Mobile Manufacturer Data Analysis_ATM
+─
+Your Name
+Daksh Sinha
+
+Overview
+Business Scenario: The database “Cellphones Information” contains details on cell phone sales or transactions.   
+DATA ANALYSIS  
+
+1 . List all the states in which we have customers who have bought cellphones from 2005 till today.  
+
+→SELECT State FROM DIM_LOCATION AS DL
+	JOIN FACT_TRANSACTIONS AS FT ON FT.IDLocation = DL.IDLocation
+	JOIN DIM_CUSTOMER AS DC ON DC.IDCustomer = FT.IDCustomer
+	WHERE DATE >= '2005-01-01'
+	GROUP BY State
+
+2 . What state in the US is buying the most 'Samsung' cell phones?  
+
+→SELECT TOP 1 State FROM DIM_LOCATION AS DL
+	JOIN FACT_TRANSACTIONS AS FT ON FT.IDLocation = DL.IDLocation
+	JOIN DIM_MODEL AS DMO ON DMO.IDModel = FT.IDModel
+	JOIN DIM_MANUFACTURER AS DM ON DM.IDManufacturer = DMO.IDManufacturer
+	WHERE Country = 'US' AND Manufacturer_Name LIKE 'S%'
+	GROUP BY State
+
+3 . Show the number of transactions for each model per zip code per state.  
+
+→SELECT  ZipCode, State, FT.IDModel, Model_Name, COUNT(FT.IDModel) AS CNT FROM DIM_LOCATION AS DL
+	JOIN FACT_TRANSACTIONS AS FT ON FT.IDLocation = DL.IDLocation
+	JOIN DIM_MODEL AS DMO ON DMO.IDModel = FT.IDModel
+	GROUP BY ZipCode, State, FT.IDModel, Model_Name
+	
+4 . Show the cheapest cellphone (Output should contain the price also) 
+
+→SELECT TOP 1 DM.IDManufacturer, Manufacturer_Name, IDModel, Model_Name, Unit_price FROM DIM_MODEL AS DMO
+JOIN DIM_MANUFACTURER AS DM ON DM.IDManufacturer = DMO.IDManufacturer
+ORDER BY Unit_price 
+
+5 . Find out the average price for each model in the top5 manufacturers in terms of sales quantity and order by average price.   
+
+→CREATE FUNCTION MULTIPLY(@TOTALPRICE FLOAT, @UNITPRICE FLOAT)
+RETURNS FLOAT
+BEGIN
+RETURN (@TOTALPRICE*@UNITPRICE)
+END
+
+
+WITH TEMP (Manufacturer_Name)
+AS (
+SELECT TOP 5 DM.Manufacturer_Name FROM DIM_MANUFACTURER AS DM
+JOIN DIM_MODEL AS DMO ON DMO.IDManufacturer = DM.IDManufacturer
+JOIN FACT_TRANSACTIONS AS FT ON FT.IDModel = DMO.IDModel
+GROUP BY DM.Manufacturer_Name
+ORDER BY SUM([dbo].[MULTIPLY](TotalPrice,Unit_price)) DESC
+) 
+SELECT FT.IDModel, AVG(TotalPrice) AS AVG_
+FROM FACT_TRANSACTIONS AS FT
+JOIN DIM_MODEL AS DMO ON DMO.IDModel = FT.IDModel
+JOIN DIM_MANUFACTURER AS DM ON DMO.IDManufacturer = DM.IDManufacturer
+WHERE DM.Manufacturer_Name IN (
+SELECT Manufacturer_Name FROM TEMP
+)
+GROUP BY FT.IDModel
+ORDER BY AVG_
+
+6 . List the names of the customers and the average amount spent in 2009, where the average is higher than 500  
+
+→SELECT DIM_CUSTOMER.*
+FROM DIM_CUSTOMER
+JOIN
+(
+SELECT IDCustomer, AVG(TotalPrice) AS AVG_  FROM FACT_TRANSACTIONS
+WHERE YEAR(DATE) = 2009  
+GROUP BY IDCustomer
+HAVING AVG(TotalPrice) > 500
+) AS T
+ON T.IDCustomer = DIM_CUSTOMER.IDCustomer
+
+7 . List if there is any model that was in the top 5 in terms of quantity, simultaneously in 2008, 2009 and 2010  
+
+→WITH TEMP AS
+	(
+SELECT IDModel, YEAR(DATE) AS YEAR_, SUM(Quantity) AS OVERALL_QTY, DENSE_RANK() OVER (PARTITION BY YEAR(DATE) 
+ORDER BY SUM(Quantity) DESC) AS RANK_
+FROM FACT_TRANSACTIONS
+WHERE YEAR(DATE) IN (2008, 2009, 2010)
+GROUP BY IDModel, YEAR(DATE)
+)
+
+SELECT IDModel FROM TEMP
+WHERE 
+(YEAR_ = 2008 AND RANK_ <= 5)
+OR (YEAR_ = 2009 AND RANK_ <= 5)
+OR (YEAR_ = 2010 AND RANK_ <= 5)
+GROUP BY IDModel
+HAVING COUNT(*) =3
+
+8 . Show the manufacturer with the 2nd top sales in the year of 2009 and the manufacturer with the 2nd top sales in the year of 2010.   
+
+→WITH TEMP AS
+(
+SELECT Manufacturer_Name, YEAR(DATE) AS YEAR_, SUM(TotalPrice) AS TOTAL_SALES, DENSE_RANK() OVER (PARTITION BY YEAR(DATE) 
+ORDER BY SUM(TotalPrice) DESC) AS SALES
+FROM DIM_MANUFACTURER AS DM
+JOIN DIM_MODEL AS DMO ON DMO.IDManufacturer = DM.IDManufacturer
+JOIN FACT_TRANSACTIONS AS FT ON FT.IDModel = DMO.IDModel
+WHERE YEAR(DATE) IN (2009, 2010) 
+GROUP BY Manufacturer_Name, YEAR(DATE)
+)
+
+SELECT Manufacturer_Name, YEAR_, TOTAL_SALES FROM TEMP
+WHERE SALES = 2 
+
+9 . Show the manufacturers that sold cellphones in 2010 but did not in 2009.  
+
+→SELECT TOP 1 Manufacturer_Name
+FROM DIM_MANUFACTURER AS DM
+JOIN DIM_MODEL AS DMO ON DMO.IDManufacturer = DM.IDManufacturer
+JOIN FACT_TRANSACTIONS AS FT ON FT.IDModel = DMO.IDModel
+WHERE YEAR(DATE) IN (2009, 2010) 
+GROUP BY Manufacturer_Name
+ORDER BY COUNT(Manufacturer_Name) OVER (PARTITION BY Manufacturer_Name) 
+
+10 . Find top 10 customers and their average spend, average quantity by each year. Also find the percentage of change in their spend. 
+
+→SELECT * , ((AVG_SPEND - LAG_PRICE)/LAG_PRICE) AS CHANGE_PERCENTAGE FROM (
+SELECT *, LAG(AVG_SPEND,1) OVER (PARTITION BY IDCUSTOMER ORDER BY YEAR_) AS LAG_PRICE FROM
+(
+SELECT IDCustomer, YEAR(DATE) AS YEAR_, AVG(TotalPrice) AS AVG_SPEND, AVG(Quantity) AS QTY
+FROM FACT_TRANSACTIONS
+WHERE IDCustomer IN (
+SELECT TOP 10 IDCustomer FROM FACT_TRANSACTIONS
+GROUP BY IDCustomer
+ORDER BY AVG(TotalPrice) DESC
+)
+GROUP BY IDCustomer, YEAR(DATE)
+) AS A
+) AS B
